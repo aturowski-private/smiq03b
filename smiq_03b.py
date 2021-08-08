@@ -2,10 +2,9 @@ import sys
 import serial
 import io
 import time
+import math
 
 ARB_MEM_ADDR = 0  # the start in ARB memory where the waveform is going to be written
-WAVEFORM_NAME = 'TEST_1'
-WAVEFORM_CLOCK_HZ = 25000.0
 
 class SMIQ3B:
   def __init__(self, port, baudrate=115200, eol=b'\n'):
@@ -71,13 +70,17 @@ class SMIQ3B:
       waveform = waveform + chr(i & 0xFF) + chr((i >> 8) & 0xFF)
       waveform = waveform + chr(q & 0xFF) + chr((q >> 8) & 0xFF)
   
-    # write waveform data to SMIQ03B
-    cmmd = ":MMEM:DATA '{:s}',#3131{{TYPE: WV,0}}{{CLOCK: {:.4f}}}{{WAVEFORM-{:d}: {:s}}}".format(name, clock_hz, len(waveform), waveform)
-    print(cmmd)
+    # write waveform data to SMIQ03B (this command is actually described in AMIQ operating manual)
+    waveform_block = "{{TYPE: WV,0}}{{CLOCK: {:.4f}}}{{WAVEFORM-{:d}: {:s}}}".format(clock_hz, len(waveform), waveform)
+    block_len = len(waveform_block)
+    digits = int(math.log10(block_len)) + 1
+    cmmd = ":MMEM:DATA '{:s}',#{:d}{:d}{:s}".format(name, digits, block_len, waveform_block)
     self.write(cmmd)
-# ;*opc?<LF>
-    
-
+    self.write(';*opc?' + self.eol)
+    if '1' in self.readline():
+      print("Waveform successfully written")
+    else:
+      raise ValueError, "Error writing waveform"
 
 if __name__ == '__main__':
   Smiq03b = SMIQ3B('COM1')
@@ -88,52 +91,4 @@ if __name__ == '__main__':
               (0.5, 0.5),
               (1.0, 1.0)]
   # and write samples to SMIQ03B
-#  Smiq03b.write_waveform('TEST_1', 25000.0, samples)
-  
-
-  # ser = serial.Serial(  port=PORT,
-                        # baudrate=BAUDRATE,
-                        # bytesize=serial.EIGHTBITS,
-                        # parity=serial.PARITY_NONE,
-                        # stopbits=serial.STOPBITS_ONE,
-                        # rtscts = True,
-                        # timeout=1)
-  # ser_io = io.TextIOWrapper(io.BufferedRWPair(ser, ser, 1),  
-                            # newline = '\n',
-                            # line_buffering = True)
-  # # switch SMIQ 03B to remote RS232
-  # ser_io.write('\n')
-                            
-  # # identify SMIQ03B
-  # ser_io.write('*IDN?\n')
-  
-  # if SMIQ03B_ID in ser_io.readline():
-    # print("Successfully connected to SMIQ03B on port {:s}".format(PORT))
-  # else:
-    # print("Can't connect to SMIQ03B")
-    # sys.exit(-1)
-    
-  # # now create I/Q samples for the waveform (first in floating point in range <-1.0, 1.0>
-  # samples = [ (-1.0, -1.0),
-              # (-0.5, -0.5),
-              # (0.0, 0.0),
-              # (0.5, 0.5),
-              # (1.0, 1.0)]
-  
-  # # convert them to binary form as expected by DAC in AWG in SMIQ03B
-  # samples_dac = []
-  # for i,q in samples:
-    # samples_dac.append((to_dac(i), to_dac(q)))
-
-  # # convert DAC samples to waveform (two bytes value, little endian format)
-  # waveform = ''
-  # waveform = waveform + '{:d},#'.format(ARB_MEM_ADDR)
-  # for i,q in samples_dac:
-    # waveform = waveform + chr(i & 0xFF) + chr((i >> 8) & 0xFF)
-    # waveform = waveform + chr(q & 0xFF) + chr((q >> 8) & 0xFF)
-  
-  # # write waveform data to SMIQ03B
-  # cmmd = ":MMEM:DATA '{:s}',#3131{{TYPE: WV,0}}{{CLOCK: {:.4f}}}{{WAVEFORM-{:d}: {:s}}}".format(WAVEFORM_NAME, WAVEFORM_CLOCK_HZ, len(waveform), waveform)
-# #  print(cmmd)
-  # ser_io.write(unicode(cmmd))
-# # ;*opc?<LF>
+  Smiq03b.write_waveform('TEST_2', 25000.0, samples)
