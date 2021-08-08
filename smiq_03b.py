@@ -84,11 +84,16 @@ class SMIQ3B:
 
 if __name__ == '__main__':
   Smiq03b = SMIQ3B('COM1')
+
   # create I/Q samples for the waveform (first in floating point in range <-1.0, 1.0>
-  samples = [ (-1.0, -1.0),
-              (-0.5, -0.5),
-              (0.0, 0.0),
-              (0.5, 0.5),
-              (1.0, 1.0)]
+  samples = []
+  SAMPLES_IN_PERIOD = 500
+  Fd = 50.0
+  for sample in range(SAMPLES_IN_PERIOD):
+    phi = -Fd * math.cos(2.0 * math.pi * sample/SAMPLES_IN_PERIOD) # amplitide constant in FM, calculate phi
+    i = math.cos(phi)
+    q = math.sin(phi)
+    samples.append((i, q))
+
   # and write samples to SMIQ03B
-  Smiq03b.write_waveform('TEST_2', 25000.0, samples)
+  Smiq03b.write_waveform('FM_50', 25000.0, samples)
