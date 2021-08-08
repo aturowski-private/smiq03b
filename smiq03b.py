@@ -3,6 +3,7 @@ import serial
 import io
 import time
 import math
+import argparse
 
 ARB_MEM_ADDR = 0  # the start in ARB memory where the waveform is going to be written
 
@@ -57,6 +58,28 @@ class SMIQ3B:
     # -1.0 -> 768
     return int(32000.0*s_float + 32768.0)
 
+  def calc_fm(self, Fm_Hz, Fd_Hz):
+    # first calculate the frequency of I/Q samples clock
+    oversampling = 10
+    clock_Hz = oversampling * max(Fm_Hz, Fd_Hz)
+    if (clock_Hz < 1e3):
+      # clock rate less that minimum
+      clock_Hz = 1e3
+    elif (clock_Hz > 40e6):
+      # calculated clock rate larger that maximum
+      print("WARNING !!! Required clock rate is {:f}Hz, but maximum allowed in 40MHz".format(clock_Hz))
+      clock_Hz = 40e6
+    samples_in_period = int(clock_Hz / Fm_Hz)
+    mod_index = Fd_Hz / Fm_Hz
+    samples = []
+    for sample in range(samples_in_period):
+      phi = -mod_index * math.cos(2.0 * math.pi * (float(sample)/float(samples_in_period))) # amplitude is constant in FM, calculate phi
+      # convert to I/Q pair
+      i = math.cos(phi)
+      q = math.sin(phi)
+      samples.append((i, q))
+    return samples, clock_Hz
+
   def write_waveform(self, name, clock_hz, samples):
     # convert samples to integer form as expected by DAC in AWG in SMIQ03B
     samples_dac = []
@@ -83,17 +106,26 @@ class SMIQ3B:
       raise ValueError, "Error writing waveform"
 
 if __name__ == '__main__':
-  Smiq03b = SMIQ3B('COM1')
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--port', default = 'COM1', help = 'Serial port name to use to connect to SMIQ03B')
+  parser.add_argument('--wav_name', default = 'TEST_1', help = 'Waveform name')
+  subparser = parser.add_subparsers(dest = 'mod')
+  # subparser for modulation 'fm'
+  fm = subparser.add_parser('FM')
+  fm.add_argument('--Fm_Hz', type = float, help = 'FM modulation frequency in Hz')
+  fm.add_argument('--Fd_Hz', type = float, help = 'FM deviation frequency in Hz')
 
-  # create I/Q samples for the waveform (first in floating point in range <-1.0, 1.0>
-  samples = []
-  SAMPLES_IN_PERIOD = 500
-  Fd = 50.0
-  for sample in range(SAMPLES_IN_PERIOD):
-    phi = -Fd * math.cos(2.0 * math.pi * sample/SAMPLES_IN_PERIOD) # amplitide constant in FM, calculate phi
-    i = math.cos(phi)
-    q = math.sin(phi)
-    samples.append((i, q))
+  # parse the arguments
+  args = parser.parse_args()
+
+  # connect to SMIQ03B
+  Smiq03b = SMIQ3B(args.port)
+
+  # create I/Q samples for the waveform depending on what kind of modulation type is required
+  if (args.mod == 'FM'):
+    samples, clock = Smiq03b.calc_fm(args.Fm_Hz, args.Fd_Hz)
+  else:
+    raise ValueError, "Invalid modulation type {:s}".format(args.mod)
 
   # and write samples to SMIQ03B
-  Smiq03b.write_waveform('FM_50', 25000.0, samples)
+  Smiq03b.write_waveform(args.wav_name, clock, samples)
