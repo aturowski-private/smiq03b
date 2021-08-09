@@ -3,6 +3,7 @@ import serial
 import io
 import time
 import math
+import cmath
 import argparse
 
 ARB_MEM_ADDR = 0  # the start in ARB memory where the waveform is going to be written
@@ -19,9 +20,9 @@ class SMIQ3B:
     self.port = port
     self.eol = eol
     self.write(self.eol)  # switch SMIQ03B to remote RS232 mode
-    time.sleep(0.1)       # wait for SMIQ03B to switch over before issuing other commands
     self.identify()
-    
+    self.min_clock_rate_Hz = 5e6  # minimum clock rate that will make sure that analog antialiasing filter is working fine
+    self.max_clock_rate_Hz = 40e6 # maximum possible clock rate
 
   def write(self, s):
     self.ser.write(s)
@@ -58,17 +59,23 @@ class SMIQ3B:
     # -1.0 -> 768
     return int(32000.0*s_float + 32768.0)
 
+  def calc_clock_rate(self, base_clock_Hz):
+    oversampling = 10 # initial oversampling
+    clock_Hz = oversampling * base_clock_Hz
+    if (clock_Hz < self.min_clock_rate_Hz):
+      # clock rate less that minimum, so incrase oversampling
+      oversampling = int(math.ceil(self.min_clock_rate_Hz/base_clock_Hz))
+      clock_Hz = oversampling * base_clock_Hz
+    elif (clock_Hz > self.max_clock_rate_Hz):
+      print("WARNING !!! Required clock rate is {:f}Hz, but maximum allowed is {:f}Hz".format(clock_Hz, self.max_clock_rate_Hz))
+      oversampling = int(math.floor(self.max_clock_rate_Hz/base_clock_Hz))
+      clock_Hz = oversampling * base_clock_Hz
+    return clock_Hz
+
   def calc_fm(self, Fm_Hz, Fd_Hz):
     # first calculate the frequency of I/Q samples clock
-    oversampling = 10
-    clock_Hz = oversampling * max(Fm_Hz, Fd_Hz)
-    if (clock_Hz < 1e3):
-      # clock rate less that minimum
-      clock_Hz = 1e3
-    elif (clock_Hz > 40e6):
-      # calculated clock rate larger that maximum
-      print("WARNING !!! Required clock rate is {:f}Hz, but maximum allowed in 40MHz".format(clock_Hz))
-      clock_Hz = 40e6
+    base_clock_Hz = max(Fm_Hz, Fd_Hz) # minimal clock rate that would do the job
+    clock_Hz = self.calc_clock_rate(base_clock_Hz)
     samples_in_period = int(clock_Hz / Fm_Hz)
     mod_index = Fd_Hz / Fm_Hz
     samples = []
@@ -78,6 +85,27 @@ class SMIQ3B:
       i = math.cos(phi)
       q = math.sin(phi)
       samples.append((i, q))
+    return samples, clock_Hz
+
+  '''
+  Function calculates samples for N tones with given separation
+  '''
+  def calc_n_tone(self, N, separation_Hz):
+    base_clock_Hz = separation_Hz * N * 2 # to satisfy Nyquist condition, sampling clock rate needs to be
+                                          # at least twice the highest frequency of the tone
+    clock_Hz = self.calc_clock_rate(base_clock_Hz)
+    ampl = 1.0/N  # the tones will get add up, so make sure that the amplitude of the sum will not exceed 1.0
+    samples_in_period = int(clock_Hz / separation_Hz)
+    samples = []
+    j = complex(0.0, 1.0)
+    for sample in range(samples_in_period):
+      val = complex(0.0, 0.0)
+      for f in range(1, N+1):
+        phi = 2.0 * cmath.pi * float(f) * (float(sample)/float(samples_in_period))
+        val = val + cmath.exp(-j * phi)
+      # scale amplitude so we don't exceed 1.0
+      val = val / float(N)
+      samples.append((val.real, val.imag)) # create I/Q pair
     return samples, clock_Hz
 
   def write_waveform(self, name, clock_hz, samples):
@@ -110,10 +138,15 @@ if __name__ == '__main__':
   parser.add_argument('--port', default = 'COM1', help = 'Serial port name to use to connect to SMIQ03B')
   parser.add_argument('--wav_name', default = 'TEST_1', help = 'Waveform name')
   subparser = parser.add_subparsers(dest = 'mod')
-  # subparser for modulation 'fm'
+  # subparser for modulation 'FM'
   fm = subparser.add_parser('FM')
   fm.add_argument('--Fm_Hz', type = float, help = 'FM modulation frequency in Hz')
   fm.add_argument('--Fd_Hz', type = float, help = 'FM deviation frequency in Hz')
+
+  # subparser for modulation 'N tone'
+  n_tone = subparser.add_parser('N_TONE')
+  n_tone.add_argument('--N', type = int, help = 'Number of tones to generate')
+  n_tone.add_argument('--separation_Hz', type = float, help = 'Separation between tones in Hz')
 
   # parse the arguments
   args = parser.parse_args()
@@ -124,6 +157,8 @@ if __name__ == '__main__':
   # create I/Q samples for the waveform depending on what kind of modulation type is required
   if (args.mod == 'FM'):
     samples, clock = Smiq03b.calc_fm(args.Fm_Hz, args.Fd_Hz)
+  elif (args.mod == 'N_TONE'):
+    samples, clock = Smiq03b.calc_n_tone(args.N, args.separation_Hz)
   else:
     raise ValueError, "Invalid modulation type {:s}".format(args.mod)
 
